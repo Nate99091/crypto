@@ -167,8 +167,10 @@ async def main():
     # Process OHLC data into DataFrames
     logger.info("Processing OHLC data...")
     ohlc_frames = {
-        pair: process_ohlc_data(data) for pair, data in ohlc_data.items() if process_ohlc_data(data)
-    }
+    pair: process_ohlc_data(data)
+    for pair, data in ohlc_data.items()
+    if process_ohlc_data(data) is not None and not process_ohlc_data(data).empty
+}
 
     # Analyze discrepancies and backtest
     logger.info("Running backtests...")
