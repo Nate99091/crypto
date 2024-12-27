@@ -1,0 +1,5 @@
+
+{
+    "asset_pairs": ["BTC/USD", "ETH/USD"],
+    "interval": 15
+}

@@ -1,16 +1,14 @@
 import aiohttp
 import asyncio
 import pandas as pd
-import matplotlib.pyplot as plt
 import logging
 import json
 import os
 from datetime import datetime
 from decimal import Decimal
-import math
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Load configuration from config.json
@@ -114,8 +112,6 @@ def backtest_and_validate(df_a, df_b, entry_threshold=None, exit_threshold=None)
     if exit_threshold is None:
         exit_threshold = df["discrepancy"].mean()
 
-    logger.info(f"Entry threshold: {entry_threshold}, Exit threshold: {exit_threshold}")
-
     results = []
     for _, row in df.iterrows():
         discrepancy = row["discrepancy"]
@@ -132,26 +128,15 @@ def backtest_and_validate(df_a, df_b, entry_threshold=None, exit_threshold=None)
             if required_usd:
                 results.append({
                     "time": row["time"],
+                    "pair_a": df_a["pair"][0],  # Include trading pair names
+                    "pair_b": df_b["pair"][0],
                     "entry_price": price_a,
                     "exit_price": exit_price,
-                    "required_usd": required_usd
+                    "required_usd": required_usd,
+                    "discrepancy": discrepancy
                 })
 
     return pd.DataFrame(results)
-
-def plot_discrepancies(df, entry_threshold, exit_threshold, pair_a, pair_b):
-    """
-    Plot discrepancies and thresholds for analysis.
-    """
-    plt.figure(figsize=(10, 6))
-    plt.plot(df["time"], df["discrepancy"], label="Discrepancy")
-    plt.axhline(y=entry_threshold, color="r", linestyle="--", label="Entry Threshold")
-    plt.axhline(y=exit_threshold, color="g", linestyle="--", label="Exit Threshold")
-    plt.title(f"Discrepancy Analysis for {pair_a} vs {pair_b}")
-    plt.xlabel("Time")
-    plt.ylabel("Discrepancy")
-    plt.legend()
-    plt.show()
 
 async def main():
     kraken_api = KrakenAPI()
@@ -159,36 +144,41 @@ async def main():
     # Fetch all trading pairs
     logger.info("Fetching all trading pairs...")
     all_pairs = await kraken_api.fetch_asset_pairs()
-    logger.info(f"Found {len(all_pairs)} pairs. Fetching OHLC data in batches...")
+    
+    # Limit to the first 50 trading pairs
+    all_pairs = all_pairs[:50]
+    logger.info(f"Selected first 50 pairs. Fetching OHLC data...")
 
-    # Fetch OHLC data for all pairs using parallelized batching
+    # Fetch OHLC data for selected pairs using parallelized batching
     ohlc_data = await kraken_api.fetch_all_ohlc_parallel(all_pairs, interval=config["interval"])
 
     # Process OHLC data into DataFrames
     logger.info("Processing OHLC data...")
     ohlc_frames = {
-    pair: process_ohlc_data(data)
-    for pair, data in ohlc_data.items()
-    if process_ohlc_data(data) is not None and not process_ohlc_data(data).empty
-}
+        pair: process_ohlc_data(data)
+        for pair, data in ohlc_data.items()
+        if process_ohlc_data(data) is not None and not process_ohlc_data(data).empty
+    }
 
     # Analyze discrepancies and backtest
     logger.info("Running backtests...")
+    all_results = []
     for i, pair_a in enumerate(all_pairs[:-1]):
         for pair_b in all_pairs[i+1:]:
             if pair_a in ohlc_frames and pair_b in ohlc_frames:
-                logger.info(f"Testing pair {i} ({pair_a}) vs {j} ({pair_b})")
+                logger.info(f"Backtesting {pair_a} vs {pair_b}...")
                 df_a = ohlc_frames[pair_a]
                 df_b = ohlc_frames[pair_b]
                 results = backtest_and_validate(df_a, df_b)
 
                 if not results.empty:
-                    logger.info(f"Results for {pair_a} vs {pair_b}:\n{results}")
-                    # Save results for further analysis
-                    results.to_csv(f"results_{pair_a}_{pair_b}.csv", index=False)
+                    logger.info(f"Found profitable opportunities for {pair_a} vs {pair_b}.")
+                    all_results.append(results)
 
-                    # Plot discrepancies
-                    plot_discrepancies(df_a, entry_threshold=None, exit_threshold=None, pair_a=pair_a, pair_b=pair_b)
+    # Save combined results
+    combined_results = pd.concat(all_results, ignore_index=True)
+    combined_results.to_csv("combined_results.csv", index=False)
+    logger.info("Backtesting complete. Results saved to 'combined_results.csv'.")
 
 if __name__ == "__main__":
     asyncio.run(main())
