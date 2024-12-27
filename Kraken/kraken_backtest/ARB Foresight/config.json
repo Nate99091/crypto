@@ -1,5 +1,5 @@
 {
     "batch_size": 5,
     "interval": 15,
-    "profit_margin": 1.0
+    "pair_limit": 791
 }

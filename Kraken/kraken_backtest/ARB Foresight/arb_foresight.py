@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Load configuration from config.json
-config_path = "/Users/nathanhart/Desktop/Archive/Crypto/Kraken/kraken_backtest/ARB Foresight/config.json"
+config_path = os.path.expanduser("~/Desktop/Archive/Crypto/Kraken/kraken_backtest/ARB Foresight/config.json")
 try:
     with open(config_path, "r") as config_file:
         config = json.load(config_file)
@@ -31,9 +31,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to load or process trade fees file: {e}")
     exit(1)
-
-# Debugging output for confirmation
-print(trade_fees.head())
 
 class KrakenAPI:
     def __init__(self):
@@ -58,41 +55,31 @@ class KrakenAPI:
                 return []
         return []
 
-    async def fetch_ohlc_batch(self, pairs, interval=15, since=None):
+    async def fetch_ohlc_parallel(self, pairs, interval=15, since=None):
         """
-        Fetch OHLC data for a batch of trading pairs.
+        Fetch OHLC data for all pairs using asyncio.
         """
-        results = {}
-        async with aiohttp.ClientSession() as session:
-            for pair in pairs:
-                try:
-                    endpoint = f"/0/public/OHLC"
-                    url = f"{self.base_url}{endpoint}?pair={pair}&interval={interval}"
-                    if since:
-                        url += f"&since={since}"
+        async def fetch(pair):
+            endpoint = f"/0/public/OHLC"
+            url = f"{self.base_url}{endpoint}?pair={pair}&interval={interval}"
+            if since:
+                url += f"&since={since}"
 
+            async with aiohttp.ClientSession() as session:
+                try:
                     async with session.get(url) as response:
                         data = await response.json()
                         if "result" in data:
                             key = list(data["result"].keys())[0]
-                            results[pair] = data["result"][key]
+                            return pair, data["result"][key]
                 except Exception as e:
                     logger.error(f"Error fetching OHLC for {pair}: {e}")
-        return results
+                    return pair, None
+            return pair, None
 
-    async def fetch_all_ohlc_parallel(self, all_pairs, interval=15, since=None):
-        """
-        Fetch OHLC data for all pairs using parallelized batching.
-        """
-        tasks = [
-            self.fetch_ohlc_batch(all_pairs[i:i + self.batch_size], interval, since)
-            for i in range(0, len(all_pairs), self.batch_size)
-        ]
+        tasks = [fetch(pair) for pair in pairs]
         results = await asyncio.gather(*tasks)
-        ohlc_data = {}
-        for batch in results:
-            ohlc_data.update(batch)
-        return ohlc_data
+        return {pair: data for pair, data in results if data}
 
 def process_ohlc_data(ohlc_data, pair_name):
     """
@@ -110,10 +97,11 @@ def process_ohlc_data(ohlc_data, pair_name):
     df["pair"] = pair_name  # Add pair name column
     return df
 
-def backtest_and_compare(df_a, df_b, entry_threshold=None):
+def compare_pairs(pair_data, threshold=None):
     """
-    Compare two trading pairs based on discrepancy and incorporate trade fees.
+    Compare trading pairs for arbitrage opportunities.
     """
+    df_a, df_b = pair_data
     df = pd.merge(df_a, df_b, on="time", suffixes=("_a", "_b"))
     df["discrepancy"] = abs(df["close_a"] - df["close_b"])
 
@@ -122,80 +110,50 @@ def backtest_and_compare(df_a, df_b, entry_threshold=None):
     fee_b = trade_fees.at[df_b["pair"].iloc[0], "taker_fee"] if df_b["pair"].iloc[0] in trade_fees.index else 0.0026
     df["adjusted_discrepancy"] = df["discrepancy"] - (fee_a + fee_b)
 
-    # Calculate dynamic entry threshold if not provided
-    if entry_threshold is None:
-        entry_threshold = df["adjusted_discrepancy"].mean() + 2 * df["adjusted_discrepancy"].std()
+    if threshold is None:
+        threshold = df["adjusted_discrepancy"].mean() + 2 * df["adjusted_discrepancy"].std()
 
-    results = []
-    for _, row in df.iterrows():
-        adjusted_discrepancy = row["adjusted_discrepancy"]
-        if adjusted_discrepancy > entry_threshold:
-            results.append({
-                "time": row["time"],
-                "pair_a": df_a["pair"].iloc[0],
-                "pair_b": df_b["pair"].iloc[0],
-                "adjusted_discrepancy": adjusted_discrepancy,
-                "raw_discrepancy": row["discrepancy"],
-                "fee_a": fee_a,
-                "fee_b": fee_b
-            })
-
-    return pd.DataFrame(results)
+    return df[df["adjusted_discrepancy"] > threshold]
 
 async def main():
     kraken_api = KrakenAPI()
 
-    # Fetch all trading pairs
+    # Fetch trading pairs
     logger.info("Fetching all trading pairs...")
-    all_pairs = await kraken_api.fetch_asset_pairs()
-    if not all_pairs:
-        logger.error("No trading pairs found. Exiting.")
+    pairs = await kraken_api.fetch_asset_pairs()
+    if not pairs:
+        logger.error("No trading pairs found.")
         return
-    
-    # Print available pairs and prompt user for input
-    logger.info(f"{len(all_pairs)} trading pairs found.")
-    pair_count = int(input("How many trading pairs would you like to analyze? "))
-    pair_count = min(pair_count, len(all_pairs))  # Ensure valid count
-    selected_pairs = all_pairs[:pair_count]
 
-    # Fetch OHLC data for selected pairs using parallelized batching
-    logger.info(f"Fetching OHLC data for {pair_count} pairs...")
-    ohlc_data = await kraken_api.fetch_all_ohlc_parallel(selected_pairs, interval=config.get("interval", 15))
+    # Fetch OHLC data
+    logger.info("Fetching OHLC data for selected pairs...")
+    ohlc_data = await kraken_api.fetch_ohlc_parallel(pairs[:config["pair_limit"]])
 
-    # Process OHLC data into DataFrames
-    logger.info("Processing OHLC data...")
-    ohlc_frames = {
+    # Process data
+    dataframes = {
         pair: process_ohlc_data(data, pair)
         for pair, data in ohlc_data.items()
-        if process_ohlc_data(data, pair) is not None and not process_ohlc_data(data, pair).empty
+        if process_ohlc_data(data, pair) is not None
     }
 
-    # Analyze discrepancies and compare
-    logger.info("Comparing pairs...")
-    all_results = []
-    processed_pairs = set()  # Caching mechanism
-    for i, pair_a in enumerate(selected_pairs[:-1]):
-        for pair_b in selected_pairs[i+1:]:
-            if (pair_a, pair_b) in processed_pairs or (pair_b, pair_a) in processed_pairs:
+    # Compare pairs
+    logger.info("Comparing pairs for arbitrage opportunities...")
+    results = []
+    seen = set()
+    for i, pair_a in enumerate(dataframes):
+        for pair_b in list(dataframes)[i+1:]:
+            if (pair_a, pair_b) in seen or (pair_b, pair_a) in seen:
                 continue
-            processed_pairs.add((pair_a, pair_b))
-            if pair_a in ohlc_frames and pair_b in ohlc_frames:
-                logger.info(f"Comparing {pair_a} vs {pair_b}...")
-                df_a = ohlc_frames[pair_a]
-                df_b = ohlc_frames[pair_b]
-                results = backtest_and_compare(df_a, df_b)
+            seen.add((pair_a, pair_b))
+            results.append(compare_pairs((dataframes[pair_a], dataframes[pair_b])))
 
-                if not results.empty:
-                    logger.info(f"Found discrepancies for {pair_a} vs {pair_b}.")
-                    all_results.append(results)
-
-    # Save combined results
-    if all_results:
-        combined_results = pd.concat(all_results, ignore_index=True)
-        combined_results.to_csv("pair_comparison_results.csv", index=False)
-        logger.info("Comparison complete. Results saved to 'pair_comparison_results.csv'.")
+    # Combine and save results
+    if results:
+        combined_results = pd.concat(results, ignore_index=True)
+        combined_results.to_csv("optimized_pair_comparison_results.csv", index=False)
+        logger.info("Comparison complete. Results saved.")
     else:
-        logger.info("No significant discrepancies found.")
+        logger.info("No arbitrage opportunities found.")
 
 if __name__ == "__main__":
     asyncio.run(main())
