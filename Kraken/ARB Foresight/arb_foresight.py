@@ -177,7 +177,7 @@ async def main():
     for i, pair_a in enumerate(all_pairs[:-1]):
         for pair_b in all_pairs[i+1:]:
             if pair_a in ohlc_frames and pair_b in ohlc_frames:
-                logger.info(f"Backtesting {pair_a} vs {pair_b}...")
+                logger.info(f"Testing pair {i} ({pair_a}) vs {j} ({pair_b})")
                 df_a = ohlc_frames[pair_a]
                 df_b = ohlc_frames[pair_b]
                 results = backtest_and_validate(df_a, df_b)
