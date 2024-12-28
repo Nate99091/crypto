@@ -107,41 +107,41 @@ def get_top_opportunities(df, n=10, method="percentile", value=95):
     logger.info(f"Top opportunities extracted:\n{top_opportunities}")
     return top_opportunities
 
-
 def plot_opportunities(df, top_opportunities, chart_file):
     """
-    Plot raw discrepancies and adjusted discrepancies.
+    Plot raw discrepancies and adjusted discrepancies with enhanced visualization.
     """
     try:
         plt.figure(figsize=(14, 8))
 
         # Plot raw discrepancies
         plt.subplot(2, 1, 1)
-        plt.plot(df['time'], df['discrepancy'], label="Raw Discrepancy", alpha=0.6)
-        plt.scatter(top_opportunities['time'], top_opportunities['discrepancy'], color='red', label="Top Raw Opportunities")
+        plt.plot(df['time'], df['discrepancy'], label="Raw Discrepancy", alpha=0.4, color='blue')
+        plt.scatter(top_opportunities['time'], top_opportunities['discrepancy'], color='red', label="Top Raw Opportunities", s=50)
         plt.xlabel("Time")
         plt.ylabel("Raw Discrepancy")
         plt.title("Raw Discrepancy Over Time")
         plt.legend()
+        plt.grid(alpha=0.3)
 
         # Plot adjusted discrepancies
         plt.subplot(2, 1, 2)
-        plt.plot(df['time'], df['adjusted_discrepancy'], label="Adjusted Discrepancy", alpha=0.6, color='orange')
-        plt.scatter(top_opportunities['time'], top_opportunities['adjusted_discrepancy'], color='green', label="Top Adjusted Opportunities")
+        plt.plot(df['time'], df['adjusted_discrepancy'], label="Adjusted Discrepancy", alpha=0.4, color='orange')
+        plt.scatter(top_opportunities['time'], top_opportunities['adjusted_discrepancy'], color='green', label="Top Adjusted Opportunities", s=50)
         plt.xlabel("Time")
         plt.ylabel("Adjusted Discrepancy")
         plt.title("Adjusted Discrepancy Over Time")
         plt.legend()
+        plt.grid(alpha=0.3)
 
         # Rotate x-axis labels to handle dense time data
         plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         plt.savefig(chart_file)
         plt.close()
-        logger.info(f"Charts saved to: {chart_file}")
+        logger.info(f"Enhanced charts saved to: {chart_file}")
     except Exception as e:
         logger.error(f"Error creating chart: {e}")
-
 
 def main():
     """

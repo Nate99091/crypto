@@ -97,23 +97,25 @@ def process_ohlc_data(ohlc_data, pair_name):
     df["pair"] = pair_name  # Add pair name column
     return df
 
-def compare_pairs(pair_data, threshold=None):
+def analyze_results(results, dynamic_threshold=True):
     """
-    Compare trading pairs for arbitrage opportunities.
+    Analyze results to determine profitability and generate insights.
     """
-    df_a, df_b = pair_data
-    df = pd.merge(df_a, df_b, on="time", suffixes=("_a", "_b"))
-    df["discrepancy"] = abs(df["close_a"] - df["close_b"])
+    if not results:
+        logger.info("No results to analyze.")
+        return
 
-    # Adjust discrepancies for trade fees
-    fee_a = trade_fees.at[df_a["pair"].iloc[0], "taker_fee"] if df_a["pair"].iloc[0] in trade_fees.index else 0.0026
-    fee_b = trade_fees.at[df_b["pair"].iloc[0], "taker_fee"] if df_b["pair"].iloc[0] in trade_fees.index else 0.0026
-    df["adjusted_discrepancy"] = df["discrepancy"] - (fee_a + fee_b)
+    combined_results = pd.concat(results, ignore_index=True)
+    combined_results["profit"] = combined_results["adjusted_discrepancy"] * combined_results["volume_a"]
+    logger.info(f"Total Profit: {combined_results['profit'].sum():.2f}")
 
-    if threshold is None:
-        threshold = df["adjusted_discrepancy"].mean() + 2 * df["adjusted_discrepancy"].std()
-
-    return df[df["adjusted_discrepancy"] > threshold]
+    # Generate insights
+    if dynamic_threshold:
+        threshold = combined_results["adjusted_discrepancy"].mean() + 2 * combined_results["adjusted_discrepancy"].std()
+        filtered_results = combined_results[combined_results["adjusted_discrepancy"] > threshold]
+        logger.info(f"Filtered Results Exceeding Dynamic Threshold ({threshold:.2f}):")
+        logger.info(filtered_results)
+    return combined_results
 
 async def main():
     kraken_api = KrakenAPI()
@@ -147,13 +149,13 @@ async def main():
             seen.add((pair_a, pair_b))
             results.append(compare_pairs((dataframes[pair_a], dataframes[pair_b])))
 
-    # Combine and save results
-    if results:
-        combined_results = pd.concat(results, ignore_index=True)
-        combined_results.to_csv("optimized_pair_comparison_results.csv", index=False)
-        logger.info("Comparison complete. Results saved.")
-    else:
-        logger.info("No arbitrage opportunities found.")
+    # Analyze results
+    analyzed_results = analyze_results(results)
+
+    # Save analyzed results
+    if analyzed_results is not None:
+        analyzed_results.to_csv("analyzed_pair_comparison_results.csv", index=False)
+        logger.info("Analysis complete. Results saved to 'analyzed_pair_comparison_results.csv'.")
 
 if __name__ == "__main__":
     asyncio.run(main())
